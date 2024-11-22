@@ -1,144 +1,174 @@
-# Import necessary libraries
+# Importing necessary libraries
+import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.cluster import KMeans
-from sklearn.metrics import confusion_matrix, classification_report, silhouette_score
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.decomposition import PCA
-from sklearn.feature_selection import mutual_info_classif
+from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import silhouette_score, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
+import warnings
 
-# Load the dataset
-file_path = "data/RT_IOT2022.csv" # Change this path to your dataset location
-data = pd.read_csv(file_path)
+# Suppress warnings for cleaner output
+warnings.filterwarnings("ignore")
 
-# Initial exploration
-print("Initial Data Shape:", data.shape)
-print("Data Info:")
-print(data.info())
-print("Sample Data:\n", data.head())
+# File path of the dataset
+file_to_load = r"C:\Users\jnana\Downloads\ML\Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
 
-# Drop irrelevant columns
-columns_to_drop = ['Flow ID', 'Source IP', 'Source Port', 'Destination IP', 'Destination Port', 'Timestamp']
+# Check if the file exists
+if not os.path.exists(file_to_load):
+    raise FileNotFoundError(f"File not found: {file_to_load}. Please verify the file path and try again.")
+
+# Load the dataset into a pandas DataFrame
+data = pd.read_csv(file_to_load)
+
+# Sample the data to reduce its size for faster processing (10% of the data)
+data = data.sample(frac=0.1, random_state=42)
+
+# Drop unnecessary columns from the dataset
+columns_to_drop = ['Timestamp', 'Flow ID', 'Src IP', 'Dst IP', 'Src Port', 'Dst Port', 'Protocol']
 data = data.drop(columns=columns_to_drop, errors='ignore')
 
-# Identify and print the target column
-target_column = 'Attack_type'
-for col in ['Label', 'Attack', 'target']:
-    if col in data.columns:
-        target_column = col
-        break
+# Handle infinite values and replace them with NaN
+data.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-if target_column is None:
-    raise ValueError("No target column found. Please verify the column name for the labels.")
+# Fill missing values with 0 (for now)
+data.fillna(0, inplace=True)
 
-# Encode the target column: BENIGN -> 0, Attack -> 1
-label_encoder = LabelEncoder()
-data[target_column] = label_encoder.fit_transform(data[target_column])
-
-# Handle missing values by filling with the median value of each column
-numeric_columns = data.select_dtypes(include=np.number).columns
-data[numeric_columns] = data[numeric_columns].fillna(data[numeric_columns].median())
-
-# Identify categorical columns (assuming they are of type object)
+# Convert categorical columns to numerical using Label Encoding
 categorical_columns = data.select_dtypes(include=['object']).columns
+label_encoder = LabelEncoder()
+for column in categorical_columns:
+    data[column] = label_encoder.fit_transform(data[column])
 
-# Encode categorical columns using LabelEncoder
-for col in categorical_columns:
-    data[col] = label_encoder.fit_transform(data[col])
+# Get the numeric columns
+numeric_columns = data.select_dtypes(include=[np.number]).columns
 
-# After encoding, check if all columns are numeric
-print("Data types after encoding:", data.dtypes)
+# Set extreme values in numeric columns (greater than 1e10) as NaN and fill with 0
+data[numeric_columns][data[numeric_columns] > 1e10] = np.nan
+data.fillna(0, inplace=True)
 
-# Feature Selection based on Mutual Information
-X = data.drop(target_column, axis=1)
-y = data[target_column]
+# Apply logarithmic transformation to skewed numeric columns to reduce skewness
+for col in data.columns:
+    if data[col].skew() > 1:
+        data[col] = np.log1p(data[col])
 
-# Calculate mutual information scores
-mi_scores = mutual_info_classif(X, y)
+# Check for any remaining NaN or infinite values and handle them
+if data[numeric_columns].isnull().values.any():
+    print("Warning: There are still NaN values in the dataset.")
+    data.fillna(0, inplace=True)
+if np.isinf(data[numeric_columns].values).any():
+    print("Warning: There are still infinite values in the dataset.")
+    data.replace([np.inf, -np.inf], 0, inplace=True)
 
-# Display mutual information scores
-mi_scores_series = pd.Series(mi_scores, index=X.columns).sort_values(ascending=False)
-print("Top features based on mutual information:\n", mi_scores_series.head(20))
-
-# Selecting the top features based on MI
-top_features = mi_scores_series.head(20).index.tolist()
-
-# Filter dataset with top features
-X = X[top_features]
-
-# Normalize the features using StandardScaler
+# Standardize the numeric data (zero mean, unit variance)
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+data_scaled = scaler.fit_transform(data[numeric_columns])
 
-# Exploratory Data Analysis (EDA)
-print("Plotting histogram")
-plt.figure(figsize=(10, 6))
-sns.histplot(data[target_column], kde=False)
-plt.title(f"Distribution of {target_column} (0: BENIGN, 1: Attack)")
-plt.tight_layout()
-plt.show()
+# Function to determine the optimal number of clusters for KMeans using silhouette score
+def optimal_kmeans_clusters(data, max_k=10):
+    silhouette_scores = []
+    for k in range(2, max_k + 1):
+        kmeans = KMeans(n_clusters=k, random_state=42)
+        clusters = kmeans.fit_predict(data)
+        score = silhouette_score(data, clusters)
+        silhouette_scores.append(score)
+        print(f"Silhouette Score for k={k}: {score:.2f}")
+    
+    # Plot the silhouette scores for different k values
+    plt.figure(figsize=(8, 6))
+    plt.plot(range(2, max_k + 1), silhouette_scores, marker='o', linestyle='--')
+    plt.xlabel('Number of Clusters (k)')
+    plt.ylabel('Silhouette Score')
+    plt.title('Silhouette Score for Different k values')
+    plt.show()
 
-# Correlation heatmap
-print("Plotting correlation heatmap")
-plt.figure(figsize=(12, 10))
-sns.heatmap(pd.DataFrame(X_scaled, columns=top_features).corr(), cmap='viridis', annot=False)
-plt.title("Feature Correlation Heatmap")
-plt.tight_layout()
-plt.show()
+# Call the function to find the optimal k value
+optimal_kmeans_clusters(data_scaled)
 
-# Determine optimal number of clusters using the Elbow method
-inertia = []
-cluster_range = range(1, 11)
+# Set the best k value based on the silhouette score (here we choose 7)
+best_k = 7
 
-for k in cluster_range:
-    kmeans = KMeans(n_clusters=k, random_state=42)
-    kmeans.fit(X_scaled)
-    inertia.append(kmeans.inertia_)
+# Perform KMeans clustering with the selected number of clusters
+kmeans = KMeans(n_clusters=best_k, random_state=42)
+clusters = kmeans.fit_predict(data_scaled)
+data['Cluster'] = clusters
 
-plt.figure(figsize=(8, 5))
-plt.plot(cluster_range, inertia, marker='o')
-plt.title("Elbow Method for Optimal k")
-plt.xlabel("Number of clusters (k)")
-plt.ylabel("Inertia")
-plt.tight_layout()
-plt.show()
+# Evaluate the clustering performance using silhouette score
+silhouette_avg = silhouette_score(data_scaled, clusters)
+print(f"Silhouette Score for KMeans with {best_k} clusters: {silhouette_avg:.2f}")
 
-# Using k=2 for anomaly detection (normal vs. anomalous traffic)
-kmeans = KMeans(n_clusters=2, random_state=42)
-kmeans.fit(X_scaled)
+# Anomaly detection using Isolation Forest
+iso_forest = IsolationForest(contamination=0.1, n_estimators=200, max_samples=0.8, random_state=42)
+iso_anomalies = iso_forest.fit_predict(data_scaled)
+data['Iso_Anomaly'] = iso_anomalies == -1
 
-# Predict the clusters
-predicted_labels = kmeans.labels_
+# Anomaly detection using Local Outlier Factor (LOF)
+lof = LocalOutlierFactor(n_neighbors=20, contamination=0.1)
+lof_anomalies = lof.fit_predict(data_scaled)
+data['LOF_Anomaly'] = lof_anomalies == -1
 
-# Evaluate clustering with silhouette score
-silhouette_avg = silhouette_score(X_scaled, predicted_labels)
-print(f"Silhouette Score: {silhouette_avg:.2f}")
+# Anomaly detection using One-Class SVM
+oc_svm = OneClassSVM(nu=0.1, kernel="rbf", gamma='scale')
+svm_anomalies = oc_svm.fit_predict(data_scaled)
+data['SVM_Anomaly'] = svm_anomalies == -1
 
-# Map predicted clusters to actual labels
-unique_labels, counts = np.unique(predicted_labels, return_counts=True)
-label_mapping = {unique_labels[0]: 0, unique_labels[1]: 1} if counts[0] > counts[1] else {unique_labels[0]: 1, unique_labels[1]: 0}
-predicted = [label_mapping[label] for label in predicted_labels]
+# Create an ensemble anomaly detection by combining the results of all three methods
+ensemble_votes = (
+    data['Iso_Anomaly'].astype(int) + 
+    data['LOF_Anomaly'].astype(int) + 
+    data['SVM_Anomaly'].astype(int)
+)
 
-# Confusion Matrix and Classification Report
-class_names = ['BENIGN', 'Attack']
-print("Confusion Matrix:")
-print(confusion_matrix(y, predicted))
+# Mark an anomaly if two or more methods agree
+data['Ensemble_Anomaly'] = ensemble_votes >= 2
 
-print("\nClassification Report:")
-print(classification_report(y, predicted, target_names=class_names))
-
-# PCA for 2D Visualization
-print("Plotting PCA")
+# Apply PCA (Principal Component Analysis) for visualization
 pca = PCA(n_components=2)
-X_pca = pca.fit_transform(X_scaled)
+data_pca = pca.fit_transform(data_scaled)
 
-plt.figure(figsize=(10, 6))
-sns.scatterplot(x=X_pca[:, 0], y=X_pca[:, 1], hue=predicted, palette="coolwarm", style=y)
-plt.title("PCA of K-Means Clustering (2 Clusters)")
-plt.xlabel("PCA Component 1")
-plt.ylabel("PCA Component 2")
-plt.legend(['Predicted BENIGN', 'Predicted Attack'])
-plt.tight_layout()
+# Visualize the KMeans clustering results in 2D using PCA components
+plt.figure(figsize=(12, 8))
+plt.scatter(data_pca[:, 0], data_pca[:, 1], c=data['Cluster'], cmap='viridis', alpha=0.6, edgecolors='w', s=50)
+plt.title('K-means Clustering Visualization')
+plt.xlabel('PCA Component 1')
+plt.ylabel('PCA Component 2')
+
+# Highlight anomalous data points in red
+anomalous_data_pca = data_pca[data['Ensemble_Anomaly']]
+plt.scatter(anomalous_data_pca[:, 0], anomalous_data_pca[:, 1], color='red', label='Ensemble Anomalies', edgecolors='black', s=100)
+plt.legend()
+plt.show()
+
+# Evaluate the performance of the anomaly detection using precision, recall, and F1 score
+y_true = data['Ensemble_Anomaly'].astype(int)
+y_pred = data['Iso_Anomaly'].astype(int)
+precision = precision_score(y_true, y_pred)
+recall = recall_score(y_true, y_pred)
+f1 = f1_score(y_true, y_pred)
+
+# Print the evaluation metrics
+print(f"Improved Precision: {precision:.2f}")
+print(f"Improved Recall: {recall:.2f}")
+print(f"Improved F1 Score: {f1:.2f}")
+
+# Display the anomalies detected by the ensemble method
+anomalies_detected = data[data['Ensemble_Anomaly']]
+print(f"Total anomalies detected by ensemble: {len(anomalies_detected)}")
+print("Sample anomalies data:")
+print(anomalies_detected.head())
+
+# Save the detected anomalies to a CSV file
+anomalies_detected.to_csv("Detected_Ensemble_Anomalies.csv", index=False)
+print("Ensemble anomalies saved to 'Detected_Ensemble_Anomalies.csv'.")
+
+# Visualize the distribution of anomalies across clusters
+plt.figure(figsize=(8, 6))
+anomalies_detected['Cluster'].value_counts().plot(kind='bar', color='coral')
+plt.title("Anomalies per Cluster")
+plt.xlabel("Cluster")
+plt.ylabel("Number of Anomalies")
 plt.show()
