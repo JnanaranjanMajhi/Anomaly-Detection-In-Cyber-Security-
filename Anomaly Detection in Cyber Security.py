@@ -16,7 +16,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # File path of the dataset
-file_to_load = r"C:\Users\jnana\Downloads\ML\Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
+file_path = "data/Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
 
 # Check if the file exists
 if not os.path.exists(file_to_load):
