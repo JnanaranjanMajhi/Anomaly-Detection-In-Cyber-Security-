@@ -59,3 +59,7 @@ python anomaly_detection.py
 ## Results
 The anomalies detected by the ensemble method will be saved in Detected_Ensemble_Anomalies.csv.
 A visualization of anomalies in the clusters will be shown.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
