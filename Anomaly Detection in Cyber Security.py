@@ -10,7 +10,7 @@ from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_classif
 
 # Load the dataset
-file_path = "C:/Users/jnana/Downloads/ML/RT_IOT2022.csv" # Change this path to your dataset location
+file_path = "data/RT_IOT2022.csv" # Change this path to your dataset location
 data = pd.read_csv(file_path)
 
 # Initial exploration
